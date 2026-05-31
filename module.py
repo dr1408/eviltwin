@@ -137,7 +137,7 @@ class EvilTwinAttack:
         else:
             log_warn("No /sdcard/original found, iptables not restored")
     
-    def check_for_clients(self, timeout: int = 30) -> int:
+    def check_for_clients(self, timeout: int = 60) -> int:
         log_info(f"Checking for clients on {self.config.target_bssid} (channel {self.config.target_channel})...")
         
         # Force interface to correct channel
@@ -197,7 +197,7 @@ class EvilTwinAttack:
         if client_count > 0:
             log_success(f"Found {client_count} client(s):")
             for mac in clients[:5]:
-                print(f"  {mac}")
+                log_info(f"  {mac}")  # CHANGED: print to log_info
         else:
             log_warn(f"No clients found on {self.config.target_bssid}")
         
@@ -218,6 +218,9 @@ class EvilTwinAttack:
             f.unlink()
         
         log_info(f"Capturing handshake for {self.config.target_ssid} on channel {self.config.target_channel}...")
+        
+        # ADDED: Monitor mode check before client check
+        self.run_command(f"iw dev {self.config.mon_interface} info | grep -q 'type monitor' && echo '[*] {self.config.mon_interface} is in monitor mode' || echo '[!] WARNING: {self.config.mon_interface} is NOT in monitor mode!'")
         
         client_count = self.check_for_clients()
         
@@ -561,11 +564,6 @@ class EvilTwinAttack:
         parser.add_argument('--internet', required=True, help='Internet source (wlan0, auto, or custom interface name)')
         
         args = parser.parse_args()
-        
-        
-        # Clear old log file for fresh start
-        with open("/sdcard/evil_twin_debug.log", "w") as f:
-            f.truncate(0)
         
         try:
             with open("/sdcard/evil_twin.pid", "w") as f:
