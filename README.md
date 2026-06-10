@@ -45,9 +45,12 @@ for other tools like wifipumkin you need to restore it manually with this comman
 python3 attack.py
 ```
 
-## NetHunter module
+## EvilTwin NetHunter module
 
-make sure you clone it to  /  so you can use it with nethunter GUI module  ~> final path should be /eviltwin .. for the Nethunter module version important logs will be saved to sdcard .. better first to test the terminal version attack.py :)
+after running setup in the module gui :
+
+Plug adapter > turn off wifi > turn on cellular > select adapter as monitor interface > scan network and choose a target network > virtual ap from internal wlan0 or second adapter as ap > auto detect internet source > start attack
+
 
 
 

@@ -137,7 +137,7 @@ class EvilTwinAttack:
         else:
             log_warn("No /sdcard/original found, iptables not restored")
     
-    def check_for_clients(self, timeout: int = 60) -> int:
+    def check_for_clients(self, timeout: int = 30) -> int:
         log_info(f"Checking for clients on {self.config.target_bssid} (channel {self.config.target_channel})...")
         
         # Force interface to correct channel
