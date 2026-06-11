@@ -31,13 +31,13 @@ Evil twin attacks modify iptables rules. To prevent breaking your Android hotspo
 2. **Reboot** your phone
 3. Create a clean backup:
    ```bash
-   iptables-save | grep -v "bpf" > /sdcard/original
+   iptables-save | grep -v "bpf" > /sdcard/iptables-default
    ```
 the script automatically restore this backup on exit to restore android hotspot functionallity.
 
 for other tools like wifipumkin you need to restore it manually with this command
    ```bash
-   iptables-restore < /sdcard/original
+   iptables-restore < /sdcard/iptables-default
    ```
 
 
