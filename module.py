@@ -130,12 +130,12 @@ class EvilTwinAttack:
             return -1, "", str(e)
     
     def restore_iptables(self):
-        """Restore iptables from /sdcard/original (no save, just restore if exists)"""
-        if Path("/sdcard/original").exists():
-            log_info("Restoring original iptables rules from /sdcard/original")
-            self.run_command("iptables-restore < /sdcard/original 2>/dev/null")
+        """Restore iptables from /sdcard/iptables-default (no save, just restore if exists)"""
+        if Path("/sdcard/iptables-default").exists():
+            log_info("Restoring default iptables rules from /sdcard/iptables-default")
+            self.run_command("iptables-restore < /sdcard/iptables-default 2>/dev/null")
         else:
-            log_warn("No /sdcard/original found, iptables not restored")
+            log_warn("No /sdcard/iptables-default found, iptables not restored")
     
     def check_for_clients(self, timeout: int = 30) -> int:
         log_info(f"Checking for clients on {self.config.target_bssid} (channel {self.config.target_channel})...")
@@ -544,7 +544,7 @@ class EvilTwinAttack:
             log_info(f"Removing virtual AP interface {self.config.ap_interface}...")
             self.run_command(f"iw dev {self.config.ap_interface} del 2>/dev/null")
         
-        # Restore iptables from /sdcard/original (no save, no flush, no ip forward disable)
+        # Restore iptables from /sdcard/iptables-default (no save, no flush, no ip forward disable)
         self.restore_iptables()
         
         log_info("Monitor mode interface left active. Use 'iw dev' to reset if needed.")
