@@ -1018,14 +1018,12 @@ class EvilTwinAttack:
             self.run_command(f"ip link set {self.config.ap_interface} up")
         
         # Restore iptables (ignore errors)
-        if Path("/sdcard/original").exists():
-            log_info("Restoring iptables from /sdcard/original")
-            self.run_command("iptables-restore < /sdcard/original")
+        if Path("/sdcard/iptables-default").exists():
+            log_info("Restoring iptables from /sdcard/iptables-default")
+            self.run_command("iptables-restore < /sdcard/iptables-default")
         else:
             self.run_command("iptables --flush")
             self.run_command("iptables -t nat --flush")
-            with open('/proc/sys/net/ipv4/ip_forward', 'w') as f:
-                f.write("0")
         
         # Clean up all temporary files
         self.cleanup_temp_files()

@@ -6,7 +6,7 @@ This eviltwin script lets you run a fake access point portal with handshake veri
 Dependencies 
 
 ```bash
-apt install aircrack-ng hostapd dnsmasq php python3 python3-pip ethtool dsniff iw tshark
+apt install aircrack-ng hostapd dnsmasq php python3 python3-pip ethtool dsniff iw tshark xtables-addons-common
 pip3 install flask requests
 ```
 
@@ -27,18 +27,12 @@ choose iptables-legacy
 
 Evil twin attacks modify iptables rules. To prevent breaking your Android hotspot:
 
-1. Turn OFF **WiFi** and **Mobile Data**
-2. **Reboot** your phone
-3. Create a clean backup:
+1. **Reboot** your phone
+2. Create a clean backup:
    ```bash
    iptables-save | grep -v "bpf" > /sdcard/iptables-default
    ```
-the script automatically restore this backup on exit to restore android hotspot functionallity.
-
-for other tools like wifipumkin you need to restore it manually with this command
-   ```bash
-   iptables-restore < /sdcard/iptables-default
-   ```
+the script automatically restore this backup on exit to restore android hotspot functionality.
 
 
 ```bash
@@ -46,6 +40,8 @@ python3 attack.py
 ```
 
 ## EvilTwin NetHunter module
+
+Nethunter now automates saving of the default iptables  on the first install and reboot of the phone so no need to run iptables-save manually.
 
 after running setup in the module gui :
 
