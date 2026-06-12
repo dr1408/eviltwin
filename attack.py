@@ -716,6 +716,13 @@ class EvilTwinAttack:
             sys.exit(1)
         
         if Path("hostapd.conf").exists():
+            # Auto-detect hw_mode based on channel
+            channel_num = int(self.config.target_channel)
+            if channel_num > 14:
+                hw_mode = "a"
+            else:
+                hw_mode = "g"
+            self.run_command(f"sed -i 's/^hw_mode=.*/hw_mode={hw_mode}/' hostapd.conf")
             self.run_command(f"sed -i 's/^ssid=.*/ssid={self.config.target_ssid}/' hostapd.conf")
             self.run_command(f"sed -i 's/^channel=.*/channel={self.config.target_channel}/' hostapd.conf")
             self.run_command(f"sed -i 's/^interface=.*/interface={self.config.ap_interface}/' hostapd.conf")
