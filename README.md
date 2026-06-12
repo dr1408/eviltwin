@@ -6,7 +6,7 @@ This eviltwin script lets you run a fake access point portal with handshake veri
 Dependencies 
 
 ```bash
-apt install aircrack-ng hostapd dnsmasq php python3 python3-pip ethtool dsniff iw tshark xtables-addons-common
+apt install aircrack-ng hostapd dnsmasq php python3 python3-pip ethtool dnschef iw tshark xtables-addons-common
 pip3 install flask requests
 ```
 
